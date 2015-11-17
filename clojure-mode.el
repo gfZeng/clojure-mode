@@ -629,6 +629,108 @@ point) to check."
 (put 'definline 'clojure-doc-string-elt 2)
 (put 'defprotocol 'clojure-doc-string-elt 2)
 
+;;; Vertical alignment
+(defcustom clojure-align-binding-forms '("let" "when-let" "if-let" "binding" "loop" "with-open")
+  "List of strings matching forms that have binding forms."
+  :type '(repeat string))
+
+(defcustom clojure-align-forms nil
+  "If non-nil, vertically align some forms internally.
+This applies to binding forms (as identified by
+‘clojure-align-binding-forms’) and to map literals.  If nil,
+don’t align forms at all.
+
+This can also be a number, which is the maximum
+number of spaces to use for aligning some forms.  If vertical
+alignment would require more than this many consecutive spaces,
+only one space is used instead."
+  :type '(choice integer boolean))
+
+(defcustom clojure-align-cond-forms '("condp" "cond" "cond->" "cond->>" "case")
+  "List of strings identifying cond-like forms."
+  :type '(repeat string))
+
+(defun clojure--position-for-alignment ()
+  "Non-nil if the sexp around point should be internally aligned.
+Point is left immediately before the forms that should be
+aligned."
+  (or (and (eq (char-before) ?{)
+           (not (eq (char-before (1- (point))) ?\#)))
+      (let* ((fun    (car (member (thing-at-point 'symbol) clojure-align-cond-forms)))
+             (method (and fun (clojure--get-indent-method fun)))
+             (skip   (cond ((numberp method) method)
+                           ((sequencep method) (elt method 0)))))
+        (when (numberp skip)
+          (clojure-forward-logical-sexp (1+ skip))
+          (comment-forward (point-max))
+          skip)) ; Return non-nil.
+      (save-excursion
+        (forward-char -1)
+        (while (and (not (bobp))
+                    (progn (backward-sexp 1)
+                           (clojure--looking-at-non-logical-sexp))))
+        (member (thing-at-point 'symbol) clojure-align-binding-forms))))
+
+(defun clojure--align-point-to-column (p column &optional max-spaces)
+  "Align the form after position P to COLUMN.
+If MAX-SPACES is a number, don't do any alignment if that would
+require more than this many spaces."
+  (goto-char p)
+  ;; Insert before deleting, so it's easier for `save-excursion' to do
+  ;; the right thing.
+  (let ((spaces (- column (current-column))))
+    (insert (if (or (not max-spaces) (>= max-spaces spaces))
+                (make-string spaces ?\s)
+              " ")))
+  (when (looking-at "[[:space:]]+")
+    (replace-match "")))
+
+(defun clojure-align-sexp (beg end)
+  "Vertically align the contents of the sexp around point.
+When called from lisp code BEG should be at the start of a sexp
+and END should be somewhere inside the same sexp.  Alignment
+stops on the line that contains END, not necessarily on END."
+  (interactive (if (memq (char-after) '(?\( ?\[))
+                   (list (point) (point-max))
+                 (list (elt (syntax-ppss) 1)
+                       (line-end-position))))
+  (save-excursion
+    (goto-char (1+ beg))
+    (when (clojure--position-for-alignment)
+      (let ((target-column nil)
+            (points-to-align nil)
+            (last-line-end -1))
+        (condition-case nil
+            (while (and (< (point) end)
+                        (not (eobp)))
+              ;; We’re at the binding, move over it.
+              (clojure-forward-logical-sexp)
+              (let ((moved (skip-syntax-forward " ")))
+                ;; Don’t align end-of-line, comment or end-of-sexp.
+                (unless (or (eolp) (memq (car (syntax-after (point))) '(11 5)))
+                  ;; Don’t align multiple bindings in same line.
+                  (when (> (point) last-line-end)
+                    (push (- (point) moved) points-to-align)
+                    (setq target-column (max (or target-column 0)
+                                             (- (current-column) moved -1)))
+                    (setq last-line-end (line-end-position)))
+                  (clojure-forward-logical-sexp))))
+          ;; It's all right for the sexp to end before END.
+          (scan-error nil))
+        (when target-column
+          (dolist (p points-to-align)
+            (clojure--align-point-to-column p target-column
+                                     (when (numberp clojure-align-forms)
+                                       clojure-align-forms))))))))
+
+(defun clojure--maybe-align-up-to-line ()
+  "If suitable, align forms in current line and above."
+  (when clojure-align-forms
+    (let ((open-paren-pos (elt (syntax-ppss) 1)))
+      (when open-paren-pos
+        (clojure-align-sexp open-paren-pos (point))))))
+
+;;; Indentation
 (defun clojure-indent-line ()
   "Indent current line as Clojure code."
   (if (clojure-in-docstring-p)
@@ -638,7 +740,8 @@ point) to check."
                    (<= (string-width (match-string-no-properties 0))
                        (string-width (clojure-docstring-fill-prefix))))
           (replace-match (clojure-docstring-fill-prefix))))
-    (lisp-indent-line)))
+    (prog1 (lisp-indent-line)
+      (clojure--maybe-align-up-to-line))))
 
 (defvar clojure-get-indent-function nil
   "Function to get the indent spec of a symbol.

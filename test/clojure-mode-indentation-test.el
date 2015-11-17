@@ -373,6 +373,171 @@ x
 2
 3))")
 
+;;; Alignment
+(defmacro def-full-align-test (name value &rest forms)
+  "Verify that all FORMs correspond to a properly indented sexps."
+  (declare (indent 2))
+  `(ert-deftest ,(intern (format "test-align-%s-%s" name value)) ()
+     (let ((clojure-align-forms ,value))
+       ,@(mapcar (lambda (form)
+                   `(with-temp-buffer
+                      (clojure-mode)
+                      (insert "\n" ,(replace-regexp-in-string " +" " " form))
+                      (indent-region (point-min) (point-max))
+                      (should (equal (buffer-substring-no-properties (point-min) (point-max))
+                                     ,(concat "\n" form)))))
+                 forms))))
+
+(def-full-align-test basic t
+  "{:this-is-a-form b
+ c               d}"
+  "{:this-is b
+ c        d}"
+  "{:this b
+ c     d}"
+  "{:a b
+ c  d}"
+
+  "(let [this-is-a-form b
+      c              d])"
+  "(let [this-is b
+      c       d])"
+  "(let [this b
+      c    d])"
+  "(let [a b
+      c d])")
+
+(def-full-align-test basic-reversed t
+  "{c               d
+ :this-is-a-form b}"
+  "{c        d
+ :this-is b}"
+  "{c     d
+ :this b}"
+  "{c  d
+ :a b}"
+
+  "(let [c              d
+      this-is-a-form b])"
+  "(let [c       d
+      this-is b])"
+  "(let [c    d
+      this b])"
+  "(let [c d
+      a b])")
+
+(def-full-align-test basic 10
+  "{:this-is-a-form b
+ c d}"
+  "{:this-is b
+ c        d}"
+  "{:this b
+ c     d}"
+  "{:a b
+ c  d}"
+
+  "(let [this-is-a-form b
+      c d])"
+  "(let [this-is b
+      c       d])"
+  "(let [this b
+      c    d])"
+  "(let [a b
+      c d])")
+
+(def-full-align-test basic-reversed 10
+  "{c d
+ :this-is-a-form b}"
+  "{c        d
+ :this-is b}"
+  "{c     d
+ :this b}"
+  "{c  d
+ :a b}"
+
+  "(let [c d
+      this-is-a-form b])"
+  "(let [c       d
+      this-is b])"
+  "(let [c    d
+      this b])"
+  "(let [c d
+      a b])")
+
+(def-full-align-test basic nil
+  "{:this-is-a-form b
+ c d}"
+  "{:this-is b
+ c d}"
+  "{:this b
+ c d}"
+  "{:a b
+ c d}"
+
+  "(let [this-is-a-form b
+      c d])"
+  "(let [this-is b
+      c d])"
+  "(let [this b
+      c d])"
+  "(let [a b
+      c d])")
+
+(def-full-align-test basic-reversed nil
+  "{c d
+ :this-is-a-form b}"
+  "{c d
+ :this-is b}"
+  "{c d
+ :this b}"
+  "{c d
+ :a b}"
+
+  "(let [c d
+      this-is-a-form b])"
+  "(let [c d
+      this-is b])"
+  "(let [c d
+      this b])"
+  "(let [c d
+      a b])")
+
+(def-full-align-test incomplete-sexp t
+  "(cond aa b
+      casodkas )"
+  "(cond aa b
+      casodkas)"
+  "(cond aa b
+      casodkas "
+  "(cond aa b
+      casodkas"
+  "(cond aa       b
+      casodkas a)"
+  "(cond casodkas a
+      aa       b)"
+  "(cond casodkas
+      aa b)")
+
+(def-full-align-test multiple-words t
+  "(cond this     is just
+      a        test of
+      how      well
+      multiple words will work)")
+
+(ert-deftest clojure-test-align-only-up-to-line ()
+  (with-temp-buffer
+    (clojure-mode)
+    (insert "(let [this is
+      a test of
+      a b])")
+    (forward-line 0)
+    (forward-char -1)
+    (indent-according-to-mode)
+    (should (equal (buffer-string)
+                   "(let [this is
+      a    test of
+      a b])"))))
+
 
 ;;; Misc
 
